@@ -40,6 +40,7 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let Ok((table, memory_map)) = system_table.exit_boot_services(image, &mut [0; 4096 * 4]) else { return Status::BUFFER_TOO_SMALL; };
 
     let entry_point = map_kernel(kernel);
+    install_hooks();
     info!("jumping to entrypoint entry_point={entry_point:#x}");
 
     unsafe {
@@ -155,4 +156,37 @@ fn map_kernel(kernel: &mut [u8]) -> u64 {
     }
 
     elf.header.pt2.entry_point()
+}
+
+fn install_hooks() {
+    // Overwrite the CF_puts function with some shellcode that writes the
+    // string to the serial port.
+    // 0:  66 ba f8 03             mov    dx,0x3f8
+    // 4:  8a 07                   mov    al,BYTE PTR [rdi]
+    // 6:  ee                      out    dx,al
+    // 7:  48 ff c7                inc    rdi
+    // a:  84 c0                   test   al,al
+    // c:  75 f6                   jne    4 <_main+0x4>
+    // e:  c3                      ret
+    // Note that this shellcode also writes the null terminator. We have to do
+    // this because of space contraints on the shellcode.
+    let mut debug_puts_function =
+        unsafe { core::slice::from_raw_parts_mut(0x10c072a0 as *mut u8, 0x10) };
+    debug_puts_function.copy_from_slice(&[
+        0x66, 0xBA, 0xF8, 0x03, 0x8A, 0x07, 0x84, 0xC0, 0x74, 0x05, 0xEE, 0xFF, 0xC7, 0xEB, 0xF5,
+        0xC3,
+    ]);
+
+    // Alternative:
+    // 0:  66 ba f8 03             mov    dx,0x3f8
+    // 4:  8a 07                   mov    al,BYTE PTR [rdi]
+    // 6:  84 c0                   test   al,al
+    // 8:  74 05                   je     f <_main+0xf>
+    // a:  ee                      out    dx,al
+    // b:  ff c7                   inc    edi
+    // d:  eb f5                   jmp    4 <_main+0x4>
+    // f:  c3                      ret
+    // This shellcode that handles the null terminator correctly, but breaks if
+    // the input str exceeds 32-bit. `inc    edi` should really be
+    // `inc    rdi`, but that's one byte over the limit.
 }
