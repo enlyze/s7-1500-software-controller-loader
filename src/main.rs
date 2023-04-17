@@ -1,9 +1,12 @@
 #![no_main]
 #![no_std]
 
+mod patch;
+
 use core::{arch::asm, fmt::Write, ptr, slice};
 
 use log::info;
+use patch::Patcher;
 use uefi::{
     prelude::*,
     proto::{
@@ -159,34 +162,94 @@ fn map_kernel(kernel: &mut [u8]) -> u64 {
 }
 
 fn install_hooks() {
-    // Overwrite the CF_puts function with some shellcode that writes the
-    // string to the serial port.
-    // 0:  66 ba f8 03             mov    dx,0x3f8
-    // 4:  8a 07                   mov    al,BYTE PTR [rdi]
-    // 6:  ee                      out    dx,al
-    // 7:  48 ff c7                inc    rdi
-    // a:  84 c0                   test   al,al
-    // c:  75 f6                   jne    4 <_main+0x4>
-    // e:  c3                      ret
-    // Note that this shellcode also writes the null terminator. We have to do
-    // this because of space contraints on the shellcode.
-    let mut debug_puts_function =
-        unsafe { core::slice::from_raw_parts_mut(0x10c072a0 as *mut u8, 0x10) };
-    debug_puts_function.copy_from_slice(&[
-        0x66, 0xBA, 0xF8, 0x03, 0x8A, 0x07, 0x84, 0xC0, 0x74, 0x05, 0xEE, 0xFF, 0xC7, 0xEB, 0xF5,
-        0xC3,
-    ]);
+    let mut patcher = Patcher::new();
 
-    // Alternative:
-    // 0:  66 ba f8 03             mov    dx,0x3f8
-    // 4:  8a 07                   mov    al,BYTE PTR [rdi]
-    // 6:  84 c0                   test   al,al
-    // 8:  74 05                   je     f <_main+0xf>
-    // a:  ee                      out    dx,al
-    // b:  ff c7                   inc    edi
-    // d:  eb f5                   jmp    4 <_main+0x4>
-    // f:  c3                      ret
-    // This shellcode that handles the null terminator correctly, but breaks if
-    // the input str exceeds 32-bit. `inc    edi` should really be
-    // `inc    rdi`, but that's one byte over the limit.
+    // Enable what looks like log levels masks.
+    unsafe {
+        (0x18d3ea38 as *mut u32).write(!0);
+        (0x18d3ea34 as *mut u32).write(!0);
+    }
+
+    patch_puts(&mut patcher);
+    patch_printf(&mut patcher);
+    patch_vprintf(&mut patcher);
+}
+
+/// Reimplement puts. We'll print the string to the first serial port.
+fn patch_puts(patcher: &mut Patcher) {
+    patcher.set_pc(0x10c072a0);
+
+    // mov    dx,0x3f8
+    patcher.place_instruction(&[0x66, 0xba, 0xf8, 0x03]);
+    let label = patcher.label();
+    // mov    al,BYTE PTR [rdi]
+    patcher.place_instruction(&[0x8a, 0x07]);
+    // out    dx,al
+    patcher.place_instruction(&[0xee]);
+    // inc    rdi
+    patcher.place_instruction(&[0x48, 0xff, 0xc7]);
+    // test   al,al
+    patcher.place_instruction(&[0x84, 0xc0]);
+    patcher.jne(label);
+    // ret
+    patcher.place_instruction(&[0xc3]);
+}
+
+// Reimplement printf.
+fn patch_printf(patcher: &mut Patcher) {
+    patcher.set_pc(0x14de4050);
+    // push   r9
+    patcher.place_instruction(&[0x41, 0x51]);
+    // mov    r9,r8
+    patcher.place_instruction(&[0x4d, 0x89, 0xc1]);
+    // mov    r8,rcx
+    patcher.place_instruction(&[0x49, 0x89, 0xc8]);
+    // mov    rcx,rdx
+    patcher.place_instruction(&[0x48, 0x89, 0xd1]);
+    // mov    rdx,rsi
+    patcher.place_instruction(&[0x48, 0x89, 0xf2]);
+    // mov    rsi,rdi
+    patcher.place_instruction(&[0x48, 0x89, 0xfe]);
+    // lea    rdi,[rsp-0x1000]
+    patcher.place_instruction(&[0x48, 0x8d, 0xbc, 0x24, 0x00, 0xf0, 0xff, 0xff]);
+    // call    sprintf
+    patcher.call(0x15b2b390);
+    // lea    rdi,[rsp-0x1000]
+    patcher.place_instruction(&[0x48, 0x8d, 0xbc, 0x24, 0x00, 0xf0, 0xff, 0xff]);
+    // call    puts
+    patcher.call(0x10c072a0);
+    // pop    r9
+    patcher.place_instruction(&[0x41, 0x59]);
+    // ret
+    patcher.place_instruction(&[0xc3]);
+}
+
+// Reimplement vprintf.
+fn patch_vprintf(patcher: &mut Patcher) {
+    // create new callback function.
+    let callback = patcher.choose_next_address();
+    // mov    rcx,rdx
+    patcher.place_instruction(&[0x48, 0x89, 0xd1]);
+    // mov    rdx,0x3f8
+    patcher.place_instruction(&[0x48, 0xc7, 0xc2, 0xf8, 0x03, 0x00, 0x00]);
+    // rep outs dx,BYTE PTR ds:[rsi]
+    patcher.place_instruction(&[0xf3, 0x6e]);
+    // ret
+    patcher.place_instruction(&[0xc3]);
+
+    patcher.set_pc(0x14de4060);
+    // mov    rdx,rdi
+    patcher.place_instruction(&[0x48, 0x89, 0xfa]);
+    // mov    rcx,rsi
+    patcher.place_instruction(&[0x48, 0x89, 0xf1]);
+    // mov    rdi,callback
+    let mut buf = [0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x00];
+    buf[3..7].copy_from_slice(&u32::try_from(callback).unwrap().to_ne_bytes());
+    patcher.place_instruction(&buf);
+    // mov    rsi,0x0
+    patcher.place_instruction(&[0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00]);
+    // call   TD_format
+    patcher.call(0x15b34270);
+    // ret
+    patcher.place_instruction(&[0xc3]);
 }
