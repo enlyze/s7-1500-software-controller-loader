@@ -47,7 +47,7 @@ const BOOTLOADER: &[u8] = b"VMM\0";
 fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let res = unsafe { logging::init() };
     let Ok(()) = res else {
-        let mut stdout = system_table.stdout();
+        let stdout = system_table.stdout();
         let _ = writeln!(stdout, "failed to set logger");
         return Status::ABORTED;
     };
@@ -68,7 +68,7 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     info!("exiting boot services");
 
-    let Ok((table, memory_map)) = system_table.exit_boot_services(image, &mut [0; 4096 * 4]) else { return Status::BUFFER_TOO_SMALL; };
+    let Ok((_table, _memory_map)) = system_table.exit_boot_services(image, &mut [0; 4096 * 4]) else { return Status::BUFFER_TOO_SMALL; };
 
     let entry_point = map_kernel(kernel);
     install_hooks();
@@ -164,8 +164,6 @@ fn load_kernel(image: Handle, system_table: &mut SystemTable<Boot>) -> &'static 
     }
     .expect("Failed to retrieve `LoadedImage` protocol from handle");
 
-    let loaded_image = unsafe { &*loaded_image.interface.get() };
-
     let device_handle = loaded_image.device();
 
     let device_path = unsafe {
@@ -179,13 +177,12 @@ fn load_kernel(image: Handle, system_table: &mut SystemTable<Boot>) -> &'static 
         )
     }
     .expect("Failed to retrieve `DevicePath` protocol from image's device handle");
-    let mut device_path = unsafe { &*device_path.interface.get() };
 
     let fs_handle = boot_services
-        .locate_device_path::<SimpleFileSystem>(&mut device_path)
+        .locate_device_path::<SimpleFileSystem>(&mut &*device_path)
         .expect("boot device is not a simple file system");
 
-    let mut file_system_raw = unsafe {
+    let mut file_system = unsafe {
         boot_services.open_protocol::<SimpleFileSystem>(
             OpenProtocolParams {
                 handle: fs_handle,
@@ -196,7 +193,6 @@ fn load_kernel(image: Handle, system_table: &mut SystemTable<Boot>) -> &'static 
         )
     }
     .expect("failed to open simple file system protocol");
-    let file_system = unsafe { &mut *file_system_raw.interface.get() };
 
     let mut root = file_system.open_volume().unwrap();
     let mut buf = [0; 14 * 2];
@@ -229,7 +225,7 @@ fn load_kernel(image: Handle, system_table: &mut SystemTable<Boot>) -> &'static 
 }
 
 fn map_kernel(kernel: &mut [u8]) -> u64 {
-    let elf = ElfFile::new(&kernel).expect("failed to parse elf file");
+    let elf = ElfFile::new(kernel).expect("failed to parse elf file");
 
     for ph in elf
         .program_iter()
