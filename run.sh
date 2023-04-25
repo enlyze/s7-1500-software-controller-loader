@@ -19,5 +19,7 @@ UEFI_OPTIONS="-drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE -drive if=
 # when attaching with gdb: `set architecture i386:x86-64`
 DEBUG_OPTIONS="-s -S"
 
+SIEMENS_DEVICES="-device wsync -device com_trc"
+
 # Launch the vm
-qemu-system-x86_64 $UEFI_OPTIONS -drive file=fat:rw:target/image,format=raw,media=disk -m 4G -serial stdio -enable-kvm $DEBUG_OPTIONS
+../qemu/build/qemu-system-x86_64 -machine q35 $UEFI_OPTIONS -drive file=fat:rw:target/image,format=raw,media=disk -m 4G -serial stdio $DEBUG_OPTIONS $SIEMENS_DEVICES
