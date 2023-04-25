@@ -41,6 +41,8 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
         Efer::update(|flags| *flags |= EferFlags::SECURE_VIRTUAL_MACHINE_ENABLE);
     }
 
+    copy_rsdp(&system_table);
+
     let kernel = load_kernel(image, &mut system_table);
 
     info!("loaded {} bytes", kernel.len());
@@ -310,5 +312,21 @@ fn patch_memory_table_entries() {
             length: 0,
             flags: 0,
         });
+    }
+}
+
+/// The firmware expects to find the RSDP at 0xe0000 (in physical memory).
+fn copy_rsdp(system_table: &SystemTable<Boot>) {
+    let mut config_entries = system_table.config_table().iter();
+    // look for an ACPI2 RSDP first
+    let acpi2_rsdp = config_entries.find(|entry| matches!(entry.guid, cfg::ACPI2_GUID));
+    let acpi2_rsdp = acpi2_rsdp.unwrap();
+    let length = unsafe { acpi2_rsdp.address.cast::<u8>().add(20).cast::<u32>().read() };
+    unsafe {
+        copy_nonoverlapping(
+            acpi2_rsdp.address.cast::<u8>(),
+            0xe0000 as *mut u8,
+            length as usize,
+        );
     }
 }
