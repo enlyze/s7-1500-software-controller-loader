@@ -3,7 +3,12 @@
 
 mod patch;
 
-use core::{arch::asm, fmt::Write, ptr, slice};
+use core::{
+    arch::asm,
+    fmt::Write,
+    ptr::{self, copy_nonoverlapping},
+    slice,
+};
 
 use log::info;
 use patch::Patcher;
@@ -17,7 +22,10 @@ use uefi::{
             fs::SimpleFileSystem,
         },
     },
-    table::boot::{AllocateType, MemoryType, OpenProtocolAttributes, OpenProtocolParams},
+    table::{
+        boot::{AllocateType, MemoryType, OpenProtocolAttributes, OpenProtocolParams},
+        cfg,
+    },
     CStr16,
 };
 use x86_64::registers::model_specific::{Efer, EferFlags, Msr};
@@ -25,6 +33,15 @@ use xmas_elf::{program::Type, ElfFile};
 
 mod logging;
 mod panic;
+
+// We need these addresses to fit into 32 bits, but stack addresses tend to
+// be larger than that. Instead we write these structures to a fixed address
+// and pray that they're unused.
+const CMDLINE_ADDR: u32 = 0xb00000;
+const BOOTLOADER_ADDR: u32 = 0xb10000;
+
+const CMDLINE: &[u8] = b"adn_adb_halt_on_startup=\"yes\"\0";
+const BOOTLOADER: &[u8] = b"VMM\0";
 
 #[entry]
 fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
@@ -43,6 +60,8 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     copy_rsdp(&system_table);
 
+    copy_strings();
+
     let kernel = load_kernel(image, &mut system_table);
 
     info!("loaded {} bytes", kernel.len());
@@ -55,10 +74,75 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
     install_hooks();
     info!("jumping to entrypoint entry_point={entry_point:#x}");
 
+    #[repr(C)]
+    struct MultibootHeader {
+        flags: u32,
+        mem_lower: u32,
+        mem_upper: u32,
+        boot_device: u32,
+        cmdline: u32,
+        mods_count: u32,
+        mods_addr: u32,
+        syms: [u32; 4],
+        mmap_length: u32,
+        mmap_addr: u32,
+        drives_length: u32,
+        drives_addr: u32,
+        config_table: u32,
+        bootloader_name: u32,
+        apm_table: u32,
+        vbe_control_info: u32,
+        vbe_mode_info: u32,
+        vbe_mode: u16,
+        vbe_interface_seg: u16,
+        vbe_interface_off: u16,
+        vbe_interface_len: u16,
+        framebuffer_addr: u64,
+        framebuffer_pitch: u32,
+        framebuffer_width: u32,
+        framebuffer_height: u32,
+        framebuffer_bpp: u8,
+        framebuffer_type: u8,
+        color_info: [u8; 6],
+    }
+
+    let header = MultibootHeader {
+        flags: 4 | 0x200,
+        mem_lower: 0,
+        mem_upper: 0,
+        boot_device: 2,
+        cmdline: CMDLINE_ADDR,
+        mods_count: 0,
+        mods_addr: 0,
+        syms: [0; 4],
+        mmap_length: 0x1000,
+        mmap_addr: 0x12345678,
+        drives_length: 0x12345678,
+        drives_addr: 0x12345678,
+        config_table: 0,
+        bootloader_name: BOOTLOADER_ADDR,
+        apm_table: 0,
+        vbe_control_info: 0,
+        vbe_mode_info: 0,
+        vbe_mode: 0,
+        vbe_interface_seg: 0,
+        vbe_interface_off: 0,
+        vbe_interface_len: 0,
+        framebuffer_addr: 0,
+        framebuffer_pitch: 0,
+        framebuffer_width: 0,
+        framebuffer_height: 0,
+        framebuffer_bpp: 0,
+        framebuffer_type: 0,
+        color_info: [0; 6],
+    };
+
     unsafe {
         asm!(
+            "mov rbx, {header}",
             "jmp {entry_point}",
             entry_point = in(reg) entry_point,
+            header = in(reg) &header,
             in("rax") 0x2badb002,
             options(noreturn)
         );
@@ -327,6 +411,20 @@ fn copy_rsdp(system_table: &SystemTable<Boot>) {
             acpi2_rsdp.address.cast::<u8>(),
             0xe0000 as *mut u8,
             length as usize,
+        );
+    }
+}
+
+/// Copy the cmdline and bootloader strings to a fixed 32-bit address.
+fn copy_strings() {
+    unsafe {
+        copy_nonoverlapping(CMDLINE.as_ptr(), CMDLINE_ADDR as *mut u8, CMDLINE.len());
+    }
+    unsafe {
+        copy_nonoverlapping(
+            BOOTLOADER.as_ptr(),
+            BOOTLOADER_ADDR as *mut u8,
+            BOOTLOADER.len(),
         );
     }
 }
