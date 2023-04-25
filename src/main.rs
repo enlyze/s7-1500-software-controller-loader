@@ -40,7 +40,7 @@ mod panic;
 const CMDLINE_ADDR: u32 = 0xb00000;
 const BOOTLOADER_ADDR: u32 = 0xb10000;
 
-const CMDLINE: &[u8] = b"adn_adb_halt_on_startup=\"yes\"\0";
+const CMDLINE: &[u8] = b"lapic_calibration=999996\0";
 const BOOTLOADER: &[u8] = b"VMM\0";
 
 #[entry]
