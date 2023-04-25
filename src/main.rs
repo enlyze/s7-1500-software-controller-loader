@@ -20,7 +20,7 @@ use uefi::{
     table::boot::{AllocateType, MemoryType, OpenProtocolAttributes, OpenProtocolParams},
     CStr16,
 };
-use x86_64::registers::model_specific::{Efer, EferFlags};
+use x86_64::registers::model_specific::{Efer, EferFlags, Msr};
 use xmas_elf::{program::Type, ElfFile};
 
 mod logging;
@@ -170,17 +170,21 @@ fn map_kernel(kernel: &mut [u8]) -> u64 {
 
 fn install_hooks() {
     let mut patcher = Patcher::new();
+    patch_puts(&mut patcher);
+    patch_printf(&mut patcher);
+    patch_vprintf(&mut patcher);
+    patch_put_newline(&mut patcher);
 
+    patch_log_levels();
+    patch_memory_table_entries();
+}
+
+fn patch_log_levels() {
     // Enable what looks like log levels masks.
     unsafe {
         (0x18d3ea38 as *mut u32).write(!0);
         (0x18d3ea34 as *mut u32).write(!0);
     }
-
-    patch_puts(&mut patcher);
-    patch_printf(&mut patcher);
-    patch_vprintf(&mut patcher);
-    patch_put_newline(&mut patcher);
 }
 
 /// Reimplement puts. We'll print the string to the first serial port.
@@ -274,4 +278,37 @@ fn patch_put_newline(patcher: &mut Patcher) {
     patcher.place_instruction(&[0xee]);
     // ret
     patcher.place_instruction(&[0xc3]);
+}
+
+fn patch_memory_table_entries() {
+    #[repr(C)]
+    struct MemoryTableEntry {
+        virt_addr: u32,
+        length: u32,
+        flags: u32,
+    }
+
+    let mut ptr = 0x1000005c as *mut MemoryTableEntry;
+
+    // Add an entry that maps the APIC.
+    let apic_base_msr = Msr::new(0x1b);
+    let apic_address = unsafe { apic_base_msr.read() } & 0xf_ffff_ffff_f000;
+    let apic_address = u32::try_from(apic_address).unwrap();
+    unsafe {
+        ptr.write(MemoryTableEntry {
+            virt_addr: apic_address,
+            length: 0x1000,
+            flags: 0xff,
+        });
+        ptr = ptr.add(1);
+    }
+
+    // Write the last zero entry.
+    unsafe {
+        ptr.write(MemoryTableEntry {
+            virt_addr: 0,
+            length: 0,
+            flags: 0,
+        });
+    }
 }
