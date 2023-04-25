@@ -180,6 +180,7 @@ fn install_hooks() {
     patch_puts(&mut patcher);
     patch_printf(&mut patcher);
     patch_vprintf(&mut patcher);
+    patch_put_newline(&mut patcher);
 }
 
 /// Reimplement puts. We'll print the string to the first serial port.
@@ -257,6 +258,20 @@ fn patch_vprintf(patcher: &mut Patcher) {
     patcher.place_instruction(&[0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00]);
     // call   TD_format
     patcher.call(0x15b34270);
+    // ret
+    patcher.place_instruction(&[0xc3]);
+}
+
+/// Reimplement a function that prints a newline.
+fn patch_put_newline(patcher: &mut Patcher) {
+    patcher.set_pc(0x10c072b0);
+
+    // mov    dx,0x3f8
+    patcher.place_instruction(&[0x66, 0xba, 0xf8, 0x03]);
+    // mov    al,0xa
+    patcher.place_instruction(&[0xb0, 0x0a]);
+    // out    dx,al
+    patcher.place_instruction(&[0xee]);
     // ret
     patcher.place_instruction(&[0xc3]);
 }
