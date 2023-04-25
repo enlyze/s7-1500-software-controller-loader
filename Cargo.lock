@@ -80,6 +80,7 @@ dependencies = [
  "log",
  "uart_16550",
  "uefi",
+ "x86_64",
  "xmas-elf",
 ]
 

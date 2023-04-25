@@ -20,6 +20,7 @@ use uefi::{
     table::boot::{AllocateType, MemoryType, OpenProtocolAttributes, OpenProtocolParams},
     CStr16,
 };
+use x86_64::registers::model_specific::{Efer, EferFlags};
 use xmas_elf::{program::Type, ElfFile};
 
 mod logging;
@@ -33,6 +34,12 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
         let _ = writeln!(stdout, "failed to set logger");
         return Status::ABORTED;
     };
+
+    // The firmware will execute the `VMMCALL` instruction. This instruction
+    // requires the `EFER.SVME` bit to be set.
+    unsafe {
+        Efer::update(|flags| *flags |= EferFlags::SECURE_VIRTUAL_MACHINE_ENABLE);
+    }
 
     let kernel = load_kernel(image, &mut system_table);
 
