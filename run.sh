@@ -1,3 +1,8 @@
+# Copyright 2023 ENLYZE GmbH
+# SPDX-License-Identifier: Apache-2.0
+#
+# Written by Tom Dohrmann for ENLYZE GmbH
+
 set -e
 
 # Build the bootloader

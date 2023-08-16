@@ -1,3 +1,8 @@
+// Copyright 2023 ENLYZE GmbH
+// SPDX-License-Identifier: Apache-2.0
+//
+// Written by Tom Dohrmann for ENLYZE GmbH
+
 #![no_main]
 #![no_std]
 
@@ -68,7 +73,10 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     info!("exiting boot services");
 
-    let Ok((_table, _memory_map)) = system_table.exit_boot_services(image, &mut [0; 4096 * 4]) else { return Status::BUFFER_TOO_SMALL; };
+    let Ok((_table, _memory_map)) = system_table.exit_boot_services(image, &mut [0; 4096 * 4])
+    else {
+        return Status::BUFFER_TOO_SMALL;
+    };
 
     let entry_point = map_kernel(kernel);
     install_hooks();

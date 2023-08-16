@@ -1,3 +1,8 @@
+# Copyright 2023 ENLYZE GmbH
+# SPDX-License-Identifier: Apache-2.0
+#
+# Written by Tom Dohrmann for ENLYZE GmbH
+
 from gdb import Command, COMMAND_USER, COMPLETE_EXPRESSION, parse_and_eval, execute, Value, lookup_type, inferiors
 from struct import pack
 

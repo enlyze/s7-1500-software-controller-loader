@@ -1,3 +1,8 @@
+# Copyright 2023 ENLYZE GmbH
+# SPDX-License-Identifier: Apache-2.0
+#
+# Written by Tom Dohrmann for ENLYZE GmbH
+
 # Setup required for GEF. These may be commented out if you don't use GEF.
 set architecture i386:x86-64
 pi reset_architecture("i386:x86-64")

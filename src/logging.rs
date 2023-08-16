@@ -1,3 +1,8 @@
+// Copyright 2023 ENLYZE GmbH
+// SPDX-License-Identifier: Apache-2.0
+//
+// Written by Tom Dohrmann for ENLYZE GmbH
+
 use core::{cell::UnsafeCell, fmt::Write};
 
 use log::{set_logger, set_max_level, LevelFilter, Log, Metadata, Record, SetLoggerError};

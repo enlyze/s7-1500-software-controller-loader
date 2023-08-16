@@ -1,3 +1,8 @@
+// Copyright 2023 ENLYZE GmbH
+// SPDX-License-Identifier: Apache-2.0
+//
+// Written by Tom Dohrmann for ENLYZE GmbH
+
 //! This module implements helper for live-patching the loaded kernel. This
 //! used to reimplement some functions that have disabled (puts, printf, etc).
 //!
